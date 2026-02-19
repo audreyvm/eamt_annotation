@@ -491,14 +491,8 @@
       </select>
     </div>
 
-    <div class="field">
-      <label>Items JSON URL</label>
-      <input type="url" id="items-url" placeholder="https://raw.githubusercontent.com/…/items.json" />
-      <div class="hint">Must be a publicly accessible URL returning a JSON array.</div>
-    </div>
-
     <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.5rem;">
-      <button class="btn" id="start-btn">Load &amp; Start</button>
+      <button class="btn" id="start-btn">Start new session</button>
       <button class="btn btn-outline" id="resume-btn" style="display:none">Resume session</button>
     </div>
     <div id="setup-error"></div>
@@ -594,7 +588,9 @@
     <div class="done-actions">
       <button class="btn" id="export-done-btn">Export CSV</button>
       <button class="btn btn-outline" id="review-btn">Review flagged items</button>
+      <button class="btn btn-outline" id="load-more-btn" style="display:none">Load 50 more items</button>
     </div>
+    <div id="load-more-status" style="font-size:0.8rem;color:var(--text-muted);margin-top:0.75rem;font-family:'IBM Plex Mono',monospace;display:none"></div>
   </div>
 </div>
 
@@ -651,18 +647,34 @@ function loadFromStorage(annotatorId) {
   return raw ? JSON.parse(raw) : null;
 }
 
-// Fetch saved session from remote backend.
-// Returns a promise resolving to the session object or null.
+// Fetch saved session + allocated items from remote backend.
+// Returns { session, allocated_items } or null on failure.
 async function loadFromBackend(annotatorId) {
   if (!backendEnabled) return null;
   try {
     const res = await fetch(BACKEND_URL + '?annotator_id=' + encodeURIComponent(annotatorId));
     if (!res.ok) return null;
     const data = await res.json();
-    if (!data.found) return null;
-    return data.session;
+    if (data.error) return null;
+    return {
+      session: data.found ? data.session : null,
+      allocated_items: data.allocated_items || [],
+    };
   } catch (_) {
     return null;
+  }
+}
+
+// Fetch IAA items from GitHub.
+const IAA_ITEMS_URL = 'https://raw.githubusercontent.com/audreyvm/eamt_annotation/main/annotation/IAA_items.json';
+
+async function fetchIAAItems() {
+  try {
+    const res = await fetch(IAA_ITEMS_URL);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (_) {
+    return [];
   }
 }
 
@@ -682,31 +694,21 @@ const $ = id => document.getElementById(id);
 
 // ── Setup screen ───────────────────────────────────────────────────────────
 const annotatorSelect = $('annotator-select');
-const itemsUrlInput = $('items-url');
 const startBtn = $('start-btn');
 const resumeBtn = $('resume-btn');
 const setupError = $('setup-error');
 
-const ANNOTATOR_URLS = {
-  'annotator_A': 'https://raw.githubusercontent.com/audreyvm/eamt_annotation/main/Rosa_items.json',
-  'annotator_B': 'https://raw.githubusercontent.com/audreyvm/eamt_annotation/main/Marc_items.json',
-  'annotator_C': 'https://raw.githubusercontent.com/audreyvm/eamt_annotation/main/Audrey_items.json',
-};
+// Known annotator IDs — used only for auto-detecting saved sessions on page load
+const ANNOTATOR_IDS = ['annotator_A', 'annotator_B', 'annotator_C'];
 
-annotatorSelect.addEventListener('change', async () => {
-  const id = annotatorSelect.value;
+async function updateResumeState(id) {
   if (!id) {
     resumeBtn.style.display = 'none';
     startBtn.className = 'btn';
     return;
   }
 
-  // Pre-fill URL for this annotator (editable in case path changes)
-  if (ANNOTATOR_URLS[id]) {
-    itemsUrlInput.value = ANNOTATOR_URLS[id];
-  }
 
-  // Check localStorage first (instant), then fall back to backend
   let saved = loadFromStorage(id);
 
   if (!saved && backendEnabled) {
@@ -715,10 +717,10 @@ annotatorSelect.addEventListener('change', async () => {
     resumeBtn.disabled = true;
     startBtn.disabled = true;
 
-    saved = await loadFromBackend(id);
+    const remote = await loadFromBackend(id);
 
-    // If found remotely, seed localStorage so future loads are instant
-    if (saved) {
+    if (remote && remote.session) {
+      saved = remote.session;
       localStorage.setItem(STORAGE_PREFIX + id, JSON.stringify(saved));
     }
 
@@ -736,20 +738,35 @@ annotatorSelect.addEventListener('change', async () => {
     resumeBtn.style.display = 'none';
     startBtn.className = 'btn';
   }
+}
+
+annotatorSelect.addEventListener('change', () => {
+  updateResumeState(annotatorSelect.value);
 });
+
+// On page load: check all annotators for saved sessions and pre-select
+// whichever one has data, so Resume is visible without any interaction.
+(function autoDetectSession() {
+  for (const id of ANNOTATOR_IDS) {
+    const saved = loadFromStorage(id);
+    if (saved && saved.items && saved.items.length > 0) {
+      annotatorSelect.value = id;
+      updateResumeState(id);
+      return;
+    }
+  }
+})();
 
 startBtn.addEventListener('click', async () => {
   setupError.style.display = 'none';
   const annotatorId = annotatorSelect.value;
-  const url = itemsUrlInput.value.trim();
-
   if (!annotatorId) { showError('Select an annotator ID.'); return; }
-  if (!url) { showError('Enter a JSON URL for the items.'); return; }
+  if (!backendEnabled) { showError('No backend configured — cannot load items.'); return; }
 
   // Warn before overwriting existing saved progress
   const existing = loadFromStorage(annotatorId);
-  if (existing && existing.items.length > 0) {
-    const done = Object.keys(existing.ratings).length;
+  if (existing && existing.items && existing.items.length > 0) {
+    const done = Object.keys(existing.ratings || {}).length;
     const ok = confirm(
       `You have a saved session for this annotator (${done} / ${existing.items.length} items rated).\n\n` +
       `Starting a new session will permanently delete that progress.\n\n` +
@@ -760,22 +777,46 @@ startBtn.addEventListener('click', async () => {
 
   $('loading').classList.add('active');
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) throw new Error('JSON must be a non-empty array.');
-    initSession(annotatorId, data);
+    // Fetch allocated main items from backend + IAA items from GitHub in parallel
+    const [backendData, iaaItems] = await Promise.all([
+      loadFromBackend(annotatorId),
+      fetchIAAItems(),
+    ]);
+
+    if (!backendData) throw new Error('Could not reach the annotation backend. Check your connection.');
+
+    const mainItems = backendData.allocated_items || [];
+    if (mainItems.length === 0) throw new Error('No items allocated for this annotator. Contact Audrey.');
+
+    // Merge: IAA items first (so they appear at the start), then main items
+    const allItems = [...iaaItems, ...mainItems];
+    initSession(annotatorId, allItems);
   } catch (e) {
-    showError('Could not load items: ' + e.message);
+    showError(e.message);
   } finally {
     $('loading').classList.remove('active');
   }
 });
 
-resumeBtn.addEventListener('click', () => {
+resumeBtn.addEventListener('click', async () => {
   const annotatorId = annotatorSelect.value;
-  const saved = loadFromStorage(annotatorId);
-  if (!saved) return;
+  let saved = loadFromStorage(annotatorId);
+
+  // If nothing in localStorage, try backend (e.g. new device)
+  if (!saved && backendEnabled) {
+    $('loading').classList.add('active');
+    try {
+      const remote = await loadFromBackend(annotatorId);
+      if (remote && remote.session) {
+        saved = remote.session;
+        localStorage.setItem(STORAGE_PREFIX + annotatorId, JSON.stringify(saved));
+      }
+    } finally {
+      $('loading').classList.remove('active');
+    }
+  }
+
+  if (!saved) { showError('No saved session found.'); return; }
   state.annotatorId = annotatorId;
   state.items = saved.items;
   state.ratings = saved.ratings;
@@ -848,9 +889,8 @@ function renderItem() {
   const isLast = idx === total - 1;
   $('next-btn').textContent = isLast ? 'Finish ✓' : 'Next →';
   // Visually indicate whether a rating exists for this item
-  const hasScore = state.ratings[item.item_id]?.score !== undefined;
-  $('next-btn').classList.toggle('btn-outline', !hasScore);
-
+  const rated = state.ratings[item.item_id]?.score !== undefined;
+  $('next-btn').classList.toggle('btn-outline', !rated);
 }
 
 function currentRating() {
@@ -1005,16 +1045,69 @@ function showDone() {
   $('done-stats').innerHTML =
     `${rated} items rated<br>${flagged} flagged for review<br>${unrated > 0 ? `${unrated} items without a score` : 'All items scored'}`;
 
+  // Show load-more button only if backend is configured
+  const loadMoreBtn = $('load-more-btn');
+  if (backendEnabled) {
+    loadMoreBtn.style.display = 'inline-block';
+    loadMoreBtn.disabled = false;
+    loadMoreBtn.textContent = 'Load 50 more items';
+    $('load-more-status').style.display = 'none';
+  } else {
+    loadMoreBtn.style.display = 'none';
+  }
+
   showScreen('done');
 }
 
 $('review-btn').addEventListener('click', () => {
-  // Jump to first flagged unreviewed item
   const flaggedIdx = state.items.findIndex((item, i) => state.ratings[item.item_id]?.flag);
   if (flaggedIdx === -1) { alert('No flagged items found.'); return; }
   state.currentIndex = flaggedIdx;
   showScreen('annotate');
   renderItem();
+});
+
+$('load-more-btn').addEventListener('click', async () => {
+  const btn = $('load-more-btn');
+  const status = $('load-more-status');
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  status.style.display = 'block';
+  status.textContent = 'Requesting items from server…';
+
+  try {
+    const res = await fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ annotator_id: state.annotatorId, action: 'topup', n: 50 }),
+    });
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+
+    const newItems = data.new_items || [];
+    if (newItems.length === 0) {
+      status.textContent = 'No more items available — you have completed the full annotation set.';
+      btn.style.display = 'none';
+      return;
+    }
+
+    // Append new items to existing session and continue
+    state.items = [...state.items, ...newItems];
+    state.currentIndex = state.items.length - newItems.length; // jump to first new item
+    saveToStorage();
+
+    status.textContent = `${newItems.length} new items loaded.`;
+    setTimeout(() => {
+      showScreen('annotate');
+      renderItem();
+    }, 800);
+
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+    btn.disabled = false;
+    btn.textContent = 'Load 50 more items';
+  }
 });
 </script>
 </body>
