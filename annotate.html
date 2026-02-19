@@ -707,7 +707,7 @@ async function updateResumeState(id) {
     startBtn.className = 'btn';
     return;
   }
-
+git 
 
   let saved = loadFromStorage(id);
 
@@ -889,8 +889,8 @@ function renderItem() {
   const isLast = idx === total - 1;
   $('next-btn').textContent = isLast ? 'Finish ✓' : 'Next →';
   // Visually indicate whether a rating exists for this item
-  const rated = state.ratings[item.item_id]?.score !== undefined;
-  $('next-btn').classList.toggle('btn-outline', !rated);
+  const isRated = state.ratings[item.item_id]?.score !== undefined;
+  $('next-btn').classList.toggle('btn-outline', !isRated);
 }
 
 function currentRating() {
