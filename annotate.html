@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alignment Annotation Tool</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+
+  :root {
+    --bg: #f7f5f0;
+    --surface: #ffffff;
+    --border: #d8d4cc;
+    --border-strong: #a09890;
+    --text: #1a1816;
+    --text-muted: #6b6560;
+    --text-faint: #9e9890;
+    --accent: #1a1816;
+    --cat-bg: #f0ede8;
+    --en-bg: #f8f7f4;
+    --score-1: #c0392b;
+    --score-2: #e67e22;
+    --score-3: #f39c12;
+    --score-4: #27ae60;
+    --score-5: #1a6b3a;
+    --score-selected: #1a1816;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+
+  /* ── SCREENS ── */
+  .screen { display: none; min-height: 100vh; }
+  .screen.active { display: flex; flex-direction: column; }
+
+  /* ── SETUP SCREEN ── */
+  #setup-screen {
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  .setup-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    width: 100%;
+    max-width: 480px;
+    padding: 2.5rem;
+  }
+
+  .setup-box h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 0.25rem;
+  }
+
+  .setup-box .subtitle {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 2rem;
+    font-style: italic;
+  }
+
+  .field { margin-bottom: 1.25rem; }
+
+  .field label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .field input, .field select {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.95rem;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .field input:focus, .field select:focus {
+    border-color: var(--border-strong);
+  }
+
+  .field .hint {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    margin-top: 0.3rem;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .btn {
+    display: inline-block;
+    padding: 0.65rem 1.25rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    letter-spacing: 0.01em;
+  }
+  .btn:hover { opacity: 0.82; }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .btn-outline {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+  }
+  .btn-outline:hover { background: var(--bg); opacity: 1; }
+
+  #setup-error {
+    color: var(--score-1);
+    font-size: 0.83rem;
+    margin-top: 0.75rem;
+    display: none;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  /* ── ANNOTATION SCREEN ── */
+  #annotate-screen { flex-direction: column; }
+
+  /* Header bar */
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0.75rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .header-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  .annotator-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 0.2rem 0.5rem;
+  }
+
+  .progress-area {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 200px;
+    max-width: 400px;
+  }
+
+  .progress-bar-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    position: relative;
+  }
+
+  .progress-bar-fill {
+    position: absolute;
+    top: 0; left: 0;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+  }
+
+  .progress-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .header-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  .btn-sm {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  /* Main annotation area */
+  .annotate-main {
+    flex: 1;
+    padding: 1.5rem;
+    max-width: 920px;
+    width: 100%;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  /* Item meta */
+  .item-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    background: var(--surface);
+  }
+
+  .tag-type { border-color: var(--border-strong); color: var(--text); }
+
+  /* Text panels */
+  .text-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+
+  @media (max-width: 640px) {
+    .text-panels { grid-template-columns: 1fr; }
+  }
+
+  .text-panel {
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .text-panel.cat { background: var(--cat-bg); }
+  .text-panel.en  { background: var(--en-bg); }
+
+  .panel-lang {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+  }
+
+  .panel-text {
+    font-size: 1rem;
+    line-height: 1.65;
+    color: var(--text);
+  }
+
+  /* Rating section */
+  .rating-section { display: flex; flex-direction: column; gap: 0.75rem; }
+
+  .rating-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+  }
+
+  .score-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .score-btn {
+    flex: 1;
+    min-width: 80px;
+    padding: 0.75rem 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    cursor: pointer;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    transition: all 0.1s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    text-align: center;
+  }
+
+  .score-btn .score-num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.35rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  .score-btn .score-desc {
+    font-size: 0.72rem;
+    line-height: 1.2;
+  }
+
+  .score-btn:hover { border-color: var(--border-strong); color: var(--text); }
+
+  .score-btn[data-score="1"] .score-num { color: var(--score-1); }
+  .score-btn[data-score="2"] .score-num { color: var(--score-2); }
+  .score-btn[data-score="3"] .score-num { color: var(--score-3); }
+  .score-btn[data-score="4"] .score-num { color: var(--score-4); }
+  .score-btn[data-score="5"] .score-num { color: var(--score-5); }
+
+  .score-btn.selected {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+  }
+  .score-btn.selected .score-num { color: #fff; }
+
+  /* Note + flag row */
+  .note-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .note-input {
+    flex: 1;
+    min-width: 200px;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.88rem;
+    color: var(--text);
+    outline: none;
+    resize: none;
+    height: 2.5rem;
+    transition: border-color 0.15s, height 0.15s;
+  }
+  .note-input:focus {
+    border-color: var(--border-strong);
+    height: 5rem;
+  }
+  .note-input::placeholder { color: var(--text-faint); font-style: italic; }
+
+  .flag-btn {
+    padding: 0.55rem 1rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    cursor: pointer;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.83rem;
+    color: var(--text-muted);
+    transition: all 0.1s;
+    white-space: nowrap;
+  }
+  .flag-btn:hover { border-color: var(--border-strong); color: var(--text); }
+  .flag-btn.flagged { border-color: #e67e22; color: #e67e22; background: #fff8f0; }
+
+  /* Unrated shake animation */
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20%       { transform: translateX(-6px); }
+    40%       { transform: translateX(6px); }
+    60%       { transform: translateX(-4px); }
+    80%       { transform: translateX(4px); }
+  }
+  .unrated-shake { animation: shake 0.35s ease; }
+
+  /* Nav */
+  .nav-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding-bottom: 2rem;
+  }
+
+  .keyboard-hint {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.73rem;
+    color: var(--text-faint);
+    text-align: center;
+  }
+
+  kbd {
+    display: inline-block;
+    padding: 0.1rem 0.35rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 0.72rem;
+    border-radius: 2px;
+  }
+
+  /* ── DONE SCREEN ── */
+  #done-screen {
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  .done-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    width: 100%;
+    max-width: 480px;
+    padding: 2.5rem;
+    text-align: center;
+  }
+
+  .done-box h2 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .done-stats {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    margin: 1.25rem 0 2rem;
+    line-height: 1.8;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .done-actions { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+
+  /* Loading overlay */
+  #loading {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(247,245,240,0.85);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+  }
+  #loading.active { display: flex; }
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading">Loading items…</div>
+
+<!-- ── SETUP SCREEN ── -->
+<div id="setup-screen" class="screen active">
+  <div class="setup-box">
+    <h1>Alignment Annotation</h1>
+    <p class="subtitle">Catalan–English sentence pair quality rating</p>
+
+    <div class="field">
+      <label>Annotator ID</label>
+      <select id="annotator-select">
+        <option value="">— select —</option>
+        <option value="annotator_A">Rosa</option>
+        <option value="annotator_B">Marc</option>
+        <option value="annotator_C">Audrey</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Items JSON URL</label>
+      <input type="url" id="items-url" placeholder="https://raw.githubusercontent.com/…/items.json" />
+      <div class="hint">Must be a publicly accessible URL returning a JSON array.</div>
+    </div>
+
+    <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.5rem;">
+      <button class="btn" id="start-btn">Load &amp; Start</button>
+      <button class="btn btn-outline" id="resume-btn" style="display:none">Resume session</button>
+    </div>
+    <div id="setup-error"></div>
+  </div>
+</div>
+
+<!-- ── ANNOTATION SCREEN ── -->
+<div id="annotate-screen" class="screen">
+
+  <div class="header">
+    <div class="header-left">
+      <span class="header-title">Annotation</span>
+      <span class="annotator-tag" id="header-annotator"></span>
+    </div>
+    <div class="progress-area">
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <span class="progress-label" id="progress-label"></span>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-outline btn-sm" id="export-btn">Export CSV</button>
+      <button class="btn btn-outline btn-sm" id="quit-btn">Quit</button>
+    </div>
+  </div>
+
+  <div class="annotate-main">
+
+    <div class="item-meta">
+      <span class="tag" id="item-id-tag"></span>
+      <span class="tag tag-type" id="item-type-tag"></span>
+      <span class="tag" id="item-flag-indicator" style="display:none; border-color:#e67e22; color:#e67e22;">⚑ flagged</span>
+    </div>
+
+    <div class="text-panels">
+      <div class="text-panel cat">
+        <div class="panel-lang">Catalan</div>
+        <div class="panel-text" id="src-text"></div>
+      </div>
+      <div class="text-panel en">
+        <div class="panel-lang">English</div>
+        <div class="panel-text" id="tgt-text"></div>
+      </div>
+    </div>
+
+    <div class="rating-section">
+      <div class="rating-label">Rate this alignment</div>
+      <div class="score-buttons">
+        <button class="score-btn" data-score="1">
+          <span class="score-num">1</span>
+          <span class="score-desc">Wrong</span>
+        </button>
+        <button class="score-btn" data-score="2">
+          <span class="score-num">2</span>
+          <span class="score-desc">Poor</span>
+        </button>
+        <button class="score-btn" data-score="3">
+          <span class="score-num">3</span>
+          <span class="score-desc">Acceptable</span>
+        </button>
+        <button class="score-btn" data-score="4">
+          <span class="score-num">4</span>
+          <span class="score-desc">Good</span>
+        </button>
+        <button class="score-btn" data-score="5">
+          <span class="score-num">5</span>
+          <span class="score-desc">Perfect</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="note-row">
+      <textarea class="note-input" id="note-input" placeholder="Optional note — recurring failure patterns, ambiguous cases…" rows="1"></textarea>
+      <button class="flag-btn" id="flag-btn">⚑ Flag for review</button>
+    </div>
+
+    <div class="nav-row">
+      <button class="btn btn-outline" id="prev-btn">← Previous</button>
+      <div class="keyboard-hint">
+        Rate with keys <kbd>1</kbd>–<kbd>5</kbd> &nbsp;·&nbsp; <kbd>F</kbd> to flag &nbsp;·&nbsp; <kbd>→</kbd> next &nbsp;·&nbsp; <kbd>←</kbd> prev
+      </div>
+      <button class="btn" id="next-btn">Next →</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── DONE SCREEN ── -->
+<div id="done-screen" class="screen">
+  <div class="done-box">
+    <h2>Annotation complete</h2>
+    <div class="done-stats" id="done-stats"></div>
+    <div class="done-actions">
+      <button class="btn" id="export-done-btn">Export CSV</button>
+      <button class="btn btn-outline" id="review-btn">Review flagged items</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let state = {
+  annotatorId: null,
+  items: [],        // full item list for this annotator
+  ratings: {},      // { item_id: { score, flag, note } }
+  currentIndex: 0,
+};
+
+const STORAGE_PREFIX = 'align_annot_';
+
+// ── Paste your Apps Script web app URL here ────────────────────────────────
+const BACKEND_URL = 'YOUR_APPS_SCRIPT_URL_HERE';
+// ──────────────────────────────────────────────────────────────────────────
+
+const backendEnabled = BACKEND_URL && !BACKEND_URL.startsWith('YOUR_');
+
+function storageKey() {
+  return STORAGE_PREFIX + state.annotatorId;
+}
+
+function sessionPayload() {
+  return {
+    items: state.items,
+    ratings: state.ratings,
+    currentIndex: state.currentIndex,
+  };
+}
+
+// Save to localStorage immediately (synchronous, always available),
+// then fire-and-forget to the remote backend.
+function saveToStorage() {
+  const payload = sessionPayload();
+  localStorage.setItem(storageKey(), JSON.stringify(payload));
+
+  if (!backendEnabled || !state.annotatorId) return;
+
+  fetch(BACKEND_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ annotator_id: state.annotatorId, session: payload }),
+  }).catch(() => {
+    // Silent failure — localStorage is the fallback.
+    // The user is not interrupted; the next save will retry.
+  });
+}
+
+// Load from localStorage (fast, works offline).
+function loadFromStorage(annotatorId) {
+  const raw = localStorage.getItem(STORAGE_PREFIX + annotatorId);
+  return raw ? JSON.parse(raw) : null;
+}
+
+// Fetch saved session from remote backend.
+// Returns a promise resolving to the session object or null.
+async function loadFromBackend(annotatorId) {
+  if (!backendEnabled) return null;
+  try {
+    const res = await fetch(BACKEND_URL + '?annotator_id=' + encodeURIComponent(annotatorId));
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.found) return null;
+    return data.session;
+  } catch (_) {
+    return null;
+  }
+}
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const screens = {
+  setup: document.getElementById('setup-screen'),
+  annotate: document.getElementById('annotate-screen'),
+  done: document.getElementById('done-screen'),
+};
+
+function showScreen(name) {
+  Object.values(screens).forEach(s => s.classList.remove('active'));
+  screens[name].classList.add('active');
+}
+
+const $ = id => document.getElementById(id);
+
+// ── Setup screen ───────────────────────────────────────────────────────────
+const annotatorSelect = $('annotator-select');
+const itemsUrlInput = $('items-url');
+const startBtn = $('start-btn');
+const resumeBtn = $('resume-btn');
+const setupError = $('setup-error');
+
+const ANNOTATOR_URLS = {
+  'annotator_A': 'https://raw.githubusercontent.com/audreyvm/eamt_annotation/main/Rosa_items.json',
+  'annotator_B': 'https://raw.githubusercontent.com/audreyvm/eamt_annotation/main/Marc_items.json',
+  'annotator_C': 'https://raw.githubusercontent.com/audreyvm/eamt_annotation/main/Audrey_items.json',
+};
+
+annotatorSelect.addEventListener('change', async () => {
+  const id = annotatorSelect.value;
+  if (!id) {
+    resumeBtn.style.display = 'none';
+    startBtn.className = 'btn';
+    return;
+  }
+
+  // Pre-fill URL for this annotator (editable in case path changes)
+  if (ANNOTATOR_URLS[id]) {
+    itemsUrlInput.value = ANNOTATOR_URLS[id];
+  }
+
+  // Check localStorage first (instant), then fall back to backend
+  let saved = loadFromStorage(id);
+
+  if (!saved && backendEnabled) {
+    resumeBtn.textContent = 'Checking for saved session…';
+    resumeBtn.style.display = 'inline-block';
+    resumeBtn.disabled = true;
+    startBtn.disabled = true;
+
+    saved = await loadFromBackend(id);
+
+    // If found remotely, seed localStorage so future loads are instant
+    if (saved) {
+      localStorage.setItem(STORAGE_PREFIX + id, JSON.stringify(saved));
+    }
+
+    resumeBtn.disabled = false;
+    startBtn.disabled = false;
+  }
+
+  if (saved && saved.items && saved.items.length > 0) {
+    const done = Object.keys(saved.ratings || {}).length;
+    resumeBtn.textContent = `Resume session (${done} / ${saved.items.length} rated)`;
+    resumeBtn.style.display = 'inline-block';
+    resumeBtn.className = 'btn';
+    startBtn.className = 'btn btn-outline';
+  } else {
+    resumeBtn.style.display = 'none';
+    startBtn.className = 'btn';
+  }
+});
+
+startBtn.addEventListener('click', async () => {
+  setupError.style.display = 'none';
+  const annotatorId = annotatorSelect.value;
+  const url = itemsUrlInput.value.trim();
+
+  if (!annotatorId) { showError('Select an annotator ID.'); return; }
+  if (!url) { showError('Enter a JSON URL for the items.'); return; }
+
+  // Warn before overwriting existing saved progress
+  const existing = loadFromStorage(annotatorId);
+  if (existing && existing.items.length > 0) {
+    const done = Object.keys(existing.ratings).length;
+    const ok = confirm(
+      `You have a saved session for this annotator (${done} / ${existing.items.length} items rated).\n\n` +
+      `Starting a new session will permanently delete that progress.\n\n` +
+      `Click Cancel and use "Resume session" to continue where you left off, or OK to start fresh.`
+    );
+    if (!ok) return;
+  }
+
+  $('loading').classList.add('active');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) throw new Error('JSON must be a non-empty array.');
+    initSession(annotatorId, data);
+  } catch (e) {
+    showError('Could not load items: ' + e.message);
+  } finally {
+    $('loading').classList.remove('active');
+  }
+});
+
+resumeBtn.addEventListener('click', () => {
+  const annotatorId = annotatorSelect.value;
+  const saved = loadFromStorage(annotatorId);
+  if (!saved) return;
+  state.annotatorId = annotatorId;
+  state.items = saved.items;
+  state.ratings = saved.ratings;
+  state.currentIndex = saved.currentIndex;
+  startAnnotating();
+});
+
+function showError(msg) {
+  setupError.textContent = msg;
+  setupError.style.display = 'block';
+}
+
+function initSession(annotatorId, items) {
+  state.annotatorId = annotatorId;
+  state.items = items;
+  state.ratings = {};
+  state.currentIndex = 0;
+  saveToStorage();
+  startAnnotating();
+}
+
+// ── Annotation screen ──────────────────────────────────────────────────────
+function startAnnotating() {
+  $('header-annotator').textContent = state.annotatorId;
+  showScreen('annotate');
+  renderItem();
+}
+
+function renderItem() {
+  const idx = state.currentIndex;
+  const item = state.items[idx];
+  if (!item) { showDone(); return; }
+
+  const total = state.items.length;
+  const rated = Object.keys(state.ratings).length;
+
+  // Progress
+  $('progress-fill').style.width = `${(rated / total * 100).toFixed(1)}%`;
+  $('progress-label').textContent = `${rated} / ${total}`;
+
+  // Meta
+  $('item-id-tag').textContent = `ID: ${item.item_id}`;
+  $('item-type-tag').textContent = item.alignment_type || '1:1';
+
+  // Texts
+  $('src-text').textContent = item.src_text;
+  $('tgt-text').textContent = item.tgt_text;
+
+  // Restore saved rating if any
+  const saved = state.ratings[item.item_id] || {};
+  
+  // Score buttons
+  document.querySelectorAll('.score-btn').forEach(btn => {
+    btn.classList.toggle('selected', String(btn.dataset.score) === String(saved.score));
+  });
+
+  // Note
+  $('note-input').value = saved.note || '';
+
+  // Flag
+  const flagBtn = $('flag-btn');
+  const flagIndicator = $('item-flag-indicator');
+  const isFlagged = !!saved.flag;
+  flagBtn.classList.toggle('flagged', isFlagged);
+  flagBtn.textContent = isFlagged ? '⚑ Flagged' : '⚑ Flag for review';
+  flagIndicator.style.display = isFlagged ? 'inline' : 'none';
+
+  // Nav buttons
+  $('prev-btn').disabled = idx === 0;
+  const isLast = idx === total - 1;
+  $('next-btn').textContent = isLast ? 'Finish ✓' : 'Next →';
+  // Visually indicate whether a rating exists for this item
+  const hasScore = state.ratings[item.item_id]?.score !== undefined;
+  $('next-btn').classList.toggle('btn-outline', !hasScore);
+
+}
+
+function currentRating() {
+  return state.ratings[state.items[state.currentIndex]?.item_id] || {};
+}
+
+function saveCurrentRating(patch) {
+  const item = state.items[state.currentIndex];
+  if (!item) return;
+  state.ratings[item.item_id] = { ...currentRating(), ...patch };
+  saveToStorage();
+}
+
+// Score buttons
+document.querySelectorAll('.score-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const score = parseInt(btn.dataset.score);
+    saveCurrentRating({ score });
+    document.querySelectorAll('.score-btn').forEach(b =>
+      b.classList.toggle('selected', b === btn));
+    updateProgress();
+    $('next-btn').classList.remove('btn-outline');
+  });
+});
+
+// Flag button
+$('flag-btn').addEventListener('click', () => {
+  const current = currentRating();
+  const newFlag = !current.flag;
+  saveCurrentRating({ flag: newFlag });
+  $('flag-btn').classList.toggle('flagged', newFlag);
+  $('flag-btn').textContent = newFlag ? '⚑ Flagged' : '⚑ Flag for review';
+  $('item-flag-indicator').style.display = newFlag ? 'inline' : 'none';
+});
+
+// Note input
+$('note-input').addEventListener('input', () => {
+  saveCurrentRating({ note: $('note-input').value });
+});
+
+function updateProgress() {
+  const rated = Object.keys(state.ratings).length;
+  const total = state.items.length;
+  $('progress-fill').style.width = `${(rated / total * 100).toFixed(1)}%`;
+  $('progress-label').textContent = `${rated} / ${total}`;
+}
+
+function hasRating() {
+  const item = state.items[state.currentIndex];
+  if (!item) return false;
+  return state.ratings[item.item_id]?.score !== undefined;
+}
+
+function warnUnrated() {
+  // Brief visual shake on the score buttons to signal "rate first"
+  const section = document.querySelector('.score-buttons');
+  section.classList.remove('unrated-shake');
+  void section.offsetWidth; // force reflow to restart animation
+  section.classList.add('unrated-shake');
+}
+
+function goNext() {
+  if (!hasRating()) { warnUnrated(); return; }
+  if (state.currentIndex < state.items.length - 1) {
+    state.currentIndex++;
+    saveToStorage();
+    renderItem();
+  } else {
+    showDone();
+  }
+}
+
+function goPrev() {
+  if (state.currentIndex > 0) {
+    state.currentIndex--;
+    saveToStorage();
+    renderItem();
+  }
+}
+
+$('next-btn').addEventListener('click', goNext);
+$('prev-btn').addEventListener('click', goPrev);
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (!screens.annotate.classList.contains('active')) return;
+  const tag = document.activeElement.tagName.toLowerCase();
+  if (tag === 'textarea' || tag === 'input' || tag === 'select') {
+    // only handle arrow keys even in textarea
+    if (e.key === 'ArrowRight' && e.metaKey) { e.preventDefault(); goNext(); }
+    if (e.key === 'ArrowLeft' && e.metaKey) { e.preventDefault(); goPrev(); }
+    return;
+  }
+  if (e.key >= '1' && e.key <= '5') {
+    const score = parseInt(e.key);
+    saveCurrentRating({ score });
+    document.querySelectorAll('.score-btn').forEach(b =>
+      b.classList.toggle('selected', parseInt(b.dataset.score) === score));
+    updateProgress();
+    // Auto-advance after a short delay so the annotator sees the selection register
+    setTimeout(goNext, 300);
+  }
+  if (e.key === 'f' || e.key === 'F') {
+    $('flag-btn').click();
+  }
+  if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
+});
+
+// Export
+$('export-btn').addEventListener('click', exportCSV);
+$('export-done-btn').addEventListener('click', exportCSV);
+
+function exportCSV() {
+  const rows = [['item_id', 'annotator_id', 'alignment_type', 'score', 'flag', 'note']];
+  state.items.forEach(item => {
+    const r = state.ratings[item.item_id] || {};
+    rows.push([
+      item.item_id,
+      state.annotatorId,
+      item.alignment_type || '',
+      r.score !== undefined ? r.score : '',
+      r.flag ? 'true' : 'false',
+      (r.note || '').replace(/"/g, '""'),
+    ]);
+  });
+  const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `annotations_${state.annotatorId}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Quit
+$('quit-btn').addEventListener('click', () => {
+  if (confirm('Save progress and quit? Your session is saved in the browser.')) {
+    saveToStorage();
+    showScreen('setup');
+  }
+});
+
+// ── Done screen ────────────────────────────────────────────────────────────
+function showDone() {
+  const total = state.items.length;
+  const rated = Object.keys(state.ratings).filter(id => state.ratings[id].score !== undefined).length;
+  const flagged = Object.values(state.ratings).filter(r => r.flag).length;
+  const unrated = total - rated;
+
+  $('done-stats').innerHTML =
+    `${rated} items rated<br>${flagged} flagged for review<br>${unrated > 0 ? `${unrated} items without a score` : 'All items scored'}`;
+
+  showScreen('done');
+}
+
+$('review-btn').addEventListener('click', () => {
+  // Jump to first flagged unreviewed item
+  const flaggedIdx = state.items.findIndex((item, i) => state.ratings[item.item_id]?.flag);
+  if (flaggedIdx === -1) { alert('No flagged items found.'); return; }
+  state.currentIndex = flaggedIdx;
+  showScreen('annotate');
+  renderItem();
+});
+</script>
+</body>
+</html>
