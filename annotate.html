@@ -632,15 +632,12 @@ function saveToStorage() {
 
   if (!backendEnabled || !state.annotatorId) return;
 
-  // Apps Script executes doPost BEFORE issuing a 302 redirect.
-  // redirect:'manual' stops the browser following the redirect (which would
-  // re-issue the request as a GET with no body). The write has already
-  // happened server-side by the time we get the 302 back.
-  // mode:'no-cors' is still needed to suppress the CORS preflight.
+  // Apps Script redirects POSTs via 302, which browsers re-issue as GET.
+  // Using no-cors + text/plain avoids the preflight, and the redirect
+  // is followed correctly with the body intact.
   fetch(BACKEND_URL, {
     method: 'POST',
     mode: 'no-cors',
-    redirect: 'manual',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({ annotator_id: state.annotatorId, session: payload }),
   }).catch(() => {});
