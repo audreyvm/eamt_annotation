@@ -632,15 +632,15 @@ function saveToStorage() {
 
   if (!backendEnabled || !state.annotatorId) return;
 
+  // Apps Script redirects POSTs via 302, which browsers re-issue as GET.
+  // Using no-cors + text/plain avoids the preflight, and the redirect
+  // is followed correctly with the body intact.
   fetch(BACKEND_URL, {
-	method: 'POST',
-	redirect: 'follow',
-	headers: { 'Content-Type': 'text/plain' },
-	body: JSON.stringify({ annotator_id: state.annotatorId, session: payload }),
-  }).catch(() => {
-	// Silent failure — localStorage is the fallback.
-	// The user is not interrupted; the next save will retry.
-  });
+    method: 'POST',
+    mode: 'no-cors',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ annotator_id: state.annotatorId, session: payload }),
+  }).catch(() => {});
 }
 
 // Load from localStorage (fast, works offline).
@@ -1059,37 +1059,41 @@ $('load-more-btn').addEventListener('click', async () => {
   status.textContent = 'Requesting items from server…';
 
   try {
-	const res = await fetch(BACKEND_URL, {
-	  method: 'POST',
-	  headers: { 'Content-Type': 'application/json' },
-	  body: JSON.stringify({ annotator_id: state.annotatorId, action: 'topup', n: 50 }),
-	});
-	const data = await res.json();
+    // Topup uses GET with query params — GET requests don't trigger the
+    // Apps Script 302 redirect problem that affects POST, so we can read
+    // the response normally. The backend doGet handles action=topup.
+    const url = BACKEND_URL
+      + '?annotator_id=' + encodeURIComponent(state.annotatorId)
+      + '&action=topup'
+      + '&n=50';
+    const res = await fetch(url, { redirect: 'follow' });
+    if (!res.ok) throw new Error('Server returned ' + res.status);
+    const data = await res.json();
 
-	if (data.error) throw new Error(data.error);
+    if (data.error) throw new Error(data.error);
 
-	const newItems = data.new_items || [];
-	if (newItems.length === 0) {
-	  status.textContent = 'No more items available — you have completed the full annotation set.';
-	  btn.style.display = 'none';
-	  return;
-	}
+    const newItems = data.new_items || [];
+    if (newItems.length === 0) {
+      status.textContent = 'No more items available — you have completed the full annotation set.';
+      btn.style.display = 'none';
+      return;
+    }
 
-	// Append new items to existing session and continue
-	state.items = [...state.items, ...newItems];
-	state.currentIndex = state.items.length - newItems.length; // jump to first new item
-	saveToStorage();
+    // Append new items to existing session and continue
+    state.items = [...state.items, ...newItems];
+    state.currentIndex = state.items.length - newItems.length; // jump to first new item
+    saveToStorage();
 
-	status.textContent = `${newItems.length} new items loaded.`;
-	setTimeout(() => {
-	  showScreen('annotate');
-	  renderItem();
-	}, 800);
+    status.textContent = `${newItems.length} new items loaded.`;
+    setTimeout(() => {
+      showScreen('annotate');
+      renderItem();
+    }, 800);
 
   } catch (err) {
-	status.textContent = 'Error: ' + err.message;
-	btn.disabled = false;
-	btn.textContent = 'Load 50 more items';
+    status.textContent = 'Error: ' + err.message;
+    btn.disabled = false;
+    btn.textContent = 'Load 50 more items';
   }
 });
 </script>
