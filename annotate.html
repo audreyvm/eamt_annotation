@@ -472,6 +472,9 @@
 </head>
 <body>
 
+<!-- Hidden iframe target for form-based POST to Apps Script -->
+<iframe name="gas-post-target" id="gas-post-target" style="display:none"></iframe>
+
 <!-- Loading -->
 <div id="loading">Loading items…</div>
 
@@ -625,22 +628,60 @@ function sessionPayload() {
 }
 
 // Save to localStorage immediately (synchronous, always available),
-// then fire-and-forget to the remote backend.
+// then debounce a fire-and-forget POST to the remote backend via
+// hidden form → hidden iframe. This avoids the Apps Script 302
+// redirect problem where fetch() loses the POST body.
+let _saveTimer = null;
+
 function saveToStorage() {
   const payload = sessionPayload();
   localStorage.setItem(storageKey(), JSON.stringify(payload));
 
   if (!backendEnabled || !state.annotatorId) return;
 
-  // Apps Script redirects POSTs via 302, which browsers re-issue as GET.
-  // Using no-cors + text/plain avoids the preflight, and the redirect
-  // is followed correctly with the body intact.
-  fetch(BACKEND_URL, {
-    method: 'POST',
-    mode: 'no-cors',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ annotator_id: state.annotatorId, session: payload }),
-  }).catch(() => {});
+  // Debounce remote sync: wait 2s of inactivity before sending.
+  // This avoids hammering the backend on every keypress while still
+  // syncing reliably after each burst of activity.
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => sendToBackend(), 2000);
+}
+
+// POST to Apps Script using a hidden form targeting a hidden iframe.
+// Unlike fetch(), form submissions follow 302 redirects WITH the
+// POST body intact, which is exactly what Apps Script needs.
+function sendToBackend() {
+  if (!backendEnabled || !state.annotatorId) return;
+
+  try {
+    // Build a slim payload: only ratings + currentIndex (not items).
+    // Items are already stored server-side; sending them wastes bandwidth.
+    const slimPayload = {
+      annotator_id: state.annotatorId,
+      session: {
+        ratings: state.ratings,
+        currentIndex: state.currentIndex,
+      },
+    };
+
+    // Create a temporary form, post it to the hidden iframe, then remove it.
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = BACKEND_URL;
+    form.target = 'gas-post-target'; // targets the hidden iframe
+    form.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'payload';
+    input.value = JSON.stringify(slimPayload);
+    form.appendChild(input);
+
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+  } catch (_) {
+    // Silently fail — localStorage is the primary store.
+  }
 }
 
 // Load from localStorage (fast, works offline).
@@ -1014,6 +1055,7 @@ function exportCSV() {
 $('quit-btn').addEventListener('click', () => {
   if (confirm('Save progress and quit? Your session is saved in the browser.')) {
 	saveToStorage();
+	sendToBackend(); // sync immediately on quit, don't wait for debounce
 	showScreen('setup');
   }
 });
