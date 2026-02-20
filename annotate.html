@@ -668,18 +668,6 @@ async function loadFromBackend(annotatorId) {
   }
 }
 
-// Fetch  items from GitHub.
-const _ITEMS_URL = 'https://raw.githubusercontent.com/audreyvm/eamt_annotation/main/annotation/iaa_items.json';
-
-async function fetchIAAItems() {
-  try {
-	const res = await fetch(IAA_ITEMS_URL);
-	if (!res.ok) return [];
-	return await res.json();
-  } catch (_) {
-	return [];
-  }
-}
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const screens = {
@@ -766,41 +754,32 @@ startBtn.addEventListener('click', async () => {
   if (!annotatorId) { showError('Select an annotator ID.'); return; }
   if (!backendEnabled) { showError('No backend configured — cannot load items.'); return; }
 
-  // Warn before overwriting existing saved progress
   const existing = loadFromStorage(annotatorId);
   if (existing && existing.items && existing.items.length > 0) {
-	const done = Object.keys(existing.ratings || {}).length;
-	const ok = confirm(
-	  `You have a saved session for this annotator (${done} / ${existing.items.length} items rated).\n\n` +
-	  `Starting a new session will permanently delete that progress.\n\n` +
-	  `Click Cancel and use "Resume session" to continue where you left off, or OK to start fresh.`
-	);
-	if (!ok) return;
+    const done = Object.keys(existing.ratings || {}).length;
+    const ok = confirm(
+      `You have a saved session for this annotator (${done} / ${existing.items.length} items rated).\n\n` +
+      `Starting a new session will permanently delete that progress.\n\n` +
+      `Click Cancel and use "Resume session" to continue where you left off, or OK to start fresh.`
+    );
+    if (!ok) return;
   }
 
   $('loading').classList.add('active');
   try {
-	// Fetch allocated main items from backend + IAA items from GitHub in parallel
-	const [backendData, iaaItems] = await Promise.all([
-	  loadFromBackend(annotatorId),
-	  fetchIAAItems(),
-	]);
+    const backendData = await loadFromBackend(annotatorId);
+    if (!backendData) throw new Error('Could not reach the annotation backend. Check your connection.');
 
-	if (!backendData) throw new Error('Could not reach the annotation backend. Check your connection.');
+    const allItems = backendData.allocated_items || [];
+    if (allItems.length === 0) throw new Error('No items allocated for this annotator. Contact Audrey.');
 
-	const mainItems = backendData.allocated_items || [];
-	if (mainItems.length === 0) throw new Error('No items allocated for this annotator. Contact Audrey.');
-
-	// Merge: IAA items first (so they appear at the start), then main items
-	const allItems = [...iaaItems, ...mainItems];
-	initSession(annotatorId, allItems);
+    initSession(annotatorId, allItems);
   } catch (e) {
-	showError(e.message);
+    showError(e.message);
   } finally {
-	$('loading').classList.remove('active');
+    $('loading').classList.remove('active');
   }
 });
-
 resumeBtn.addEventListener('click', async () => {
   const annotatorId = annotatorSelect.value;
   let saved = loadFromStorage(annotatorId);
