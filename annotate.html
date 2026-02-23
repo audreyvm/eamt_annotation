@@ -105,6 +105,37 @@
 	font-family: 'IBM Plex Mono', monospace;
   }
 
+  /* Mode selector (segmented control) */
+  .mode-selector {
+	display: flex;
+	gap: 1px;
+	background: var(--border);
+	border: 1px solid var(--border);
+  }
+
+  .mode-btn {
+	flex: 1;
+	padding: 0.6rem 0.75rem;
+	border: none;
+	background: var(--bg);
+	font-family: 'IBM Plex Sans', sans-serif;
+	font-size: 0.9rem;
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: all 0.1s;
+	text-align: center;
+  }
+
+  .mode-btn.active {
+	background: var(--accent);
+	color: #fff;
+  }
+
+  .mode-btn:hover:not(.active) {
+	background: var(--surface);
+	color: var(--text);
+  }
+
   .btn {
 	display: inline-block;
 	padding: 0.65rem 1.25rem;
@@ -226,6 +257,9 @@
 	gap: 1.25rem;
   }
 
+  /* Chunk mode: wider to accommodate side-by-side long text */
+  .annotate-main.chunk-mode { max-width: 1280px; }
+
   /* Item meta */
   .item-meta {
 	display: flex;
@@ -245,6 +279,14 @@
 
   .tag-type { border-color: var(--border-strong); color: var(--text); }
 
+  /* Chunk info bar (paragraph count) */
+  .chunk-info {
+	font-family: 'IBM Plex Mono', monospace;
+	font-size: 0.78rem;
+	color: var(--text-faint);
+	display: none;
+  }
+
   /* Text panels */
   .text-panels {
 	display: grid;
@@ -254,8 +296,14 @@
 	border: 1px solid var(--border);
   }
 
+  /* Sentence mode: stack at 640px */
   @media (max-width: 640px) {
 	.text-panels { grid-template-columns: 1fr; }
+  }
+
+  /* Chunk mode: stack at 900px */
+  @media (max-width: 900px) {
+	.text-panels.chunk-panels { grid-template-columns: 1fr; }
   }
 
   .text-panel {
@@ -281,6 +329,19 @@
 	font-size: 1rem;
 	line-height: 1.65;
 	color: var(--text);
+  }
+
+  /* Paragraph spacing inside panel-text (used in chunk mode) */
+  .panel-text p { margin-bottom: 0.8em; }
+  .panel-text p:last-child { margin-bottom: 0; }
+
+  /* Word count shown below text in chunk mode */
+  .panel-wordcount {
+	font-family: 'IBM Plex Mono', monospace;
+	font-size: 0.72rem;
+	color: var(--text-faint);
+	margin-top: 0.25rem;
+	display: none;
   }
 
   /* Rating section */
@@ -482,7 +543,15 @@
 <div id="setup-screen" class="screen active">
   <div class="setup-box">
 	<h1>Alignment Annotation</h1>
-	<p class="subtitle">Catalan–English sentence pair quality rating</p>
+	<p class="subtitle" id="setup-subtitle">Catalan–English sentence pair quality rating</p>
+
+	<div class="field">
+	  <label>Mode</label>
+	  <div class="mode-selector">
+		<button class="mode-btn active" data-mode="sentence">Sentence pairs</button>
+		<button class="mode-btn" data-mode="chunk">Chunks</button>
+	  </div>
+	</div>
 
 	<div class="field">
 	  <label>Annotator ID</label>
@@ -509,6 +578,7 @@
 	<div class="header-left">
 	  <span class="header-title">Annotation</span>
 	  <span class="annotator-tag" id="header-annotator"></span>
+	  <span class="annotator-tag" id="header-mode" style="display:none"></span>
 	</div>
 	<div class="progress-area">
 	  <div class="progress-bar-track">
@@ -530,14 +600,19 @@
 	  <span class="tag" id="item-flag-indicator" style="display:none; border-color:#e67e22; color:#e67e22;">⚑ flagged</span>
 	</div>
 
+	<!-- Shown only in chunk mode: paragraph-group count -->
+	<div class="chunk-info" id="chunk-info"></div>
+
 	<div class="text-panels">
 	  <div class="text-panel cat">
 		<div class="panel-lang">Catalan</div>
 		<div class="panel-text" id="src-text"></div>
+		<div class="panel-wordcount" id="src-wordcount"></div>
 	  </div>
 	  <div class="text-panel en">
 		<div class="panel-lang">English</div>
 		<div class="panel-text" id="tgt-text"></div>
+		<div class="panel-wordcount" id="tgt-wordcount"></div>
 	  </div>
 	</div>
 
@@ -601,36 +676,63 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let state = {
   annotatorId: null,
-  items: [],        // full item list for this annotator
-  ratings: {},      // { item_id: { score, flag, note } }
+  mode: 'sentence',   // 'sentence' | 'chunk'
+  items: [],          // full item list for this annotator
+  ratings: {},        // { item_id: { score, flag, note } }
   currentIndex: 0,
 };
 
-const STORAGE_PREFIX = 'align_annot_';
+// Storage prefixes — must never change to avoid breaking saved sessions
+const SENTENCE_STORAGE_PREFIX = 'align_annot_';
+const CHUNK_STORAGE_PREFIX    = 'chunk_annot_';
+
+// ── Annotator configs per mode ─────────────────────────────────────────────
+const SENTENCE_ANNOTATORS = [
+  { value: 'annotator_A', label: 'Rosa'   },
+  { value: 'annotator_B', label: 'Marc'   },
+  { value: 'annotator_C', label: 'Audrey' },
+];
+
+const CHUNK_ANNOTATORS = [
+  { value: 'annotator_B', label: 'Marc'   },
+  { value: 'annotator_C', label: 'Audrey' },
+];
 
 // ── Paste your Apps Script web app URL here ────────────────────────────────
-
 const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwbipTErO_H5Iljx-MSKzU5D5l0BLs2XPQBIQZWG4EeutJqO_JBU5DbxdVgpi0E8JU/exec';
 // ──────────────────────────────────────────────────────────────────────────
 
 const backendEnabled = BACKEND_URL && !BACKEND_URL.startsWith('YOUR_');
 
+// ── Storage helpers ────────────────────────────────────────────────────────
+function storagePrefix(mode) {
+  return mode === 'chunk' ? CHUNK_STORAGE_PREFIX : SENTENCE_STORAGE_PREFIX;
+}
+
 function storageKey() {
-  return STORAGE_PREFIX + state.annotatorId;
+  return storagePrefix(state.mode) + state.annotatorId;
 }
 
 function sessionPayload() {
   return {
+	mode: state.mode,
 	items: state.items,
 	ratings: state.ratings,
 	currentIndex: state.currentIndex,
   };
 }
 
-// Save to localStorage immediately (synchronous, always available),
-// then debounce a fire-and-forget POST to the remote backend via
-// hidden form → hidden iframe. This avoids the Apps Script 302
-// redirect problem where fetch() loses the POST body.
+// Load from localStorage using explicit mode + annotatorId
+function loadFromStorage(annotatorId, mode) {
+  const raw = localStorage.getItem(storagePrefix(mode) + annotatorId);
+  return raw ? JSON.parse(raw) : null;
+}
+
+// ── Backend helpers ────────────────────────────────────────────────────────
+
+// Save to localStorage immediately, then debounce a fire-and-forget POST to
+// the remote backend via hidden form → hidden iframe. This avoids the Apps
+// Script 302 redirect problem where fetch() loses the POST body.
 let _saveTimer = null;
 
 function saveToStorage() {
@@ -640,64 +742,57 @@ function saveToStorage() {
   if (!backendEnabled || !state.annotatorId) return;
 
   // Debounce remote sync: wait 2s of inactivity before sending.
-  // This avoids hammering the backend on every keypress while still
-  // syncing reliably after each burst of activity.
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => sendToBackend(), 2000);
 }
 
 // POST to Apps Script using a hidden form targeting a hidden iframe.
-// Unlike fetch(), form submissions follow 302 redirects WITH the
-// POST body intact, which is exactly what Apps Script needs.
+// mode is included in the payload so the backend routes to the correct tab.
 function sendToBackend() {
   if (!backendEnabled || !state.annotatorId) return;
 
   try {
-    // Build a slim payload: only ratings + currentIndex (not items).
-    // Items are already stored server-side; sending them wastes bandwidth.
-    const slimPayload = {
-      annotator_id: state.annotatorId,
-      session: {
-        ratings: state.ratings,
-        currentIndex: state.currentIndex,
-      },
-    };
+	const slimPayload = {
+	  annotator_id: state.annotatorId,
+	  mode: state.mode,           // 'sentence' or 'chunk' → backend routes to correct tab
+	  session: {
+		ratings: state.ratings,
+		currentIndex: state.currentIndex,
+	  },
+	};
 
-    // Create a temporary form, post it to the hidden iframe, then remove it.
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = BACKEND_URL;
-    form.target = 'gas-post-target'; // targets the hidden iframe
-    form.style.display = 'none';
+	const form = document.createElement('form');
+	form.method = 'POST';
+	form.action = BACKEND_URL;
+	form.target = 'gas-post-target';
+	form.style.display = 'none';
 
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'payload';
-    input.value = JSON.stringify(slimPayload);
-    form.appendChild(input);
+	const input = document.createElement('input');
+	input.type = 'hidden';
+	input.name = 'payload';
+	input.value = JSON.stringify(slimPayload);
+	form.appendChild(input);
 
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
+	document.body.appendChild(form);
+	form.submit();
+	document.body.removeChild(form);
   } catch (_) {
-    // Silently fail — localStorage is the primary store.
+	// Silently fail — localStorage is the primary store.
   }
 }
 
-// Load from localStorage (fast, works offline).
-function loadFromStorage(annotatorId) {
-  const raw = localStorage.getItem(STORAGE_PREFIX + annotatorId);
-  return raw ? JSON.parse(raw) : null;
-}
-
 // Fetch saved session + allocated items from remote backend.
+// mode is passed as a query param so the backend reads the correct tab.
 // Returns { session, allocated_items } or null on failure.
-async function loadFromBackend(annotatorId) {
+async function loadFromBackend(annotatorId, mode) {
   if (!backendEnabled) return null;
   try {
-	const res = await fetch(BACKEND_URL + '?annotator_id=' + encodeURIComponent(annotatorId), {
-	redirect: 'follow',
-	});
+	const res = await fetch(
+	  BACKEND_URL
+	  + '?annotator_id=' + encodeURIComponent(annotatorId)
+	  + '&mode=' + encodeURIComponent(mode || 'sentence'),
+	  { redirect: 'follow' }
+	);
 	if (!res.ok) return null;
 	const data = await res.json();
 	if (data.error) return null;
@@ -710,12 +805,11 @@ async function loadFromBackend(annotatorId) {
   }
 }
 
-
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const screens = {
-  setup: document.getElementById('setup-screen'),
+  setup:    document.getElementById('setup-screen'),
   annotate: document.getElementById('annotate-screen'),
-  done: document.getElementById('done-screen'),
+  done:     document.getElementById('done-screen'),
 };
 
 function showScreen(name) {
@@ -727,12 +821,39 @@ const $ = id => document.getElementById(id);
 
 // ── Setup screen ───────────────────────────────────────────────────────────
 const annotatorSelect = $('annotator-select');
-const startBtn = $('start-btn');
-const resumeBtn = $('resume-btn');
-const setupError = $('setup-error');
+const startBtn        = $('start-btn');
+const resumeBtn       = $('resume-btn');
+const setupError      = $('setup-error');
 
-// Known annotator IDs — used only for auto-detecting saved sessions on page load
-const ANNOTATOR_IDS = ['annotator_A', 'annotator_B', 'annotator_C'];
+// Rebuild the annotator <select> options for the current mode.
+function updateAnnotatorOptions() {
+  const annotators = state.mode === 'chunk' ? CHUNK_ANNOTATORS : SENTENCE_ANNOTATORS;
+  annotatorSelect.innerHTML = '<option value="">— select —</option>';
+  annotators.forEach(a => {
+	const opt = document.createElement('option');
+	opt.value = a.value;
+	opt.textContent = a.label;
+	annotatorSelect.appendChild(opt);
+  });
+  annotatorSelect.value = '';
+  resumeBtn.style.display = 'none';
+  startBtn.className = 'btn';
+  setupError.style.display = 'none';
+}
+
+// Mode selector buttons
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+	document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+	btn.classList.add('active');
+	state.mode = btn.dataset.mode;
+	updateAnnotatorOptions();
+	$('setup-subtitle').textContent = state.mode === 'chunk'
+	  ? 'Catalan–English chunk alignment quality rating'
+	  : 'Catalan–English sentence pair quality rating';
+	autoDetectSession();
+  });
+});
 
 async function updateResumeState(id) {
   if (!id) {
@@ -741,8 +862,7 @@ async function updateResumeState(id) {
 	return;
   }
 
-
-  let saved = loadFromStorage(id);
+  let saved = loadFromStorage(id, state.mode);
 
   if (!saved && backendEnabled) {
 	resumeBtn.textContent = 'Checking for saved session…';
@@ -750,11 +870,11 @@ async function updateResumeState(id) {
 	resumeBtn.disabled = true;
 	startBtn.disabled = true;
 
-	const remote = await loadFromBackend(id);
+	const remote = await loadFromBackend(id, state.mode);
 
 	if (remote && remote.session) {
 	  saved = remote.session;
-	  localStorage.setItem(STORAGE_PREFIX + id, JSON.stringify(saved));
+	  localStorage.setItem(storagePrefix(state.mode) + id, JSON.stringify(saved));
 	}
 
 	resumeBtn.disabled = false;
@@ -777,18 +897,26 @@ annotatorSelect.addEventListener('change', () => {
   updateResumeState(annotatorSelect.value);
 });
 
-// On page load: check all annotators for saved sessions and pre-select
-// whichever one has data, so Resume is visible without any interaction.
-(function autoDetectSession() {
-  for (const id of ANNOTATOR_IDS) {
-	const saved = loadFromStorage(id);
+// On page load (and whenever mode changes): check annotators in the current
+// mode for a saved session and pre-select the one that has data.
+function autoDetectSession() {
+  const annotators = state.mode === 'chunk' ? CHUNK_ANNOTATORS : SENTENCE_ANNOTATORS;
+  for (const a of annotators) {
+	const saved = loadFromStorage(a.value, state.mode);
 	if (saved && saved.items && saved.items.length > 0) {
-	  annotatorSelect.value = id;
-	  updateResumeState(id);
+	  annotatorSelect.value = a.value;
+	  updateResumeState(a.value);
 	  return;
 	}
   }
-})();
+  // Nothing found — leave select at default and hide Resume
+  annotatorSelect.value = '';
+  resumeBtn.style.display = 'none';
+  startBtn.className = 'btn';
+}
+
+// Run auto-detect on page load (sentence mode is the default)
+autoDetectSession();
 
 startBtn.addEventListener('click', async () => {
   setupError.style.display = 'none';
@@ -796,44 +924,45 @@ startBtn.addEventListener('click', async () => {
   if (!annotatorId) { showError('Select an annotator ID.'); return; }
   if (!backendEnabled) { showError('No backend configured — cannot load items.'); return; }
 
-  const existing = loadFromStorage(annotatorId);
+  const existing = loadFromStorage(annotatorId, state.mode);
   if (existing && existing.items && existing.items.length > 0) {
-    const done = Object.keys(existing.ratings || {}).length;
-    const ok = confirm(
-      `You have a saved session for this annotator (${done} / ${existing.items.length} items rated).\n\n` +
-      `Starting a new session will permanently delete that progress.\n\n` +
-      `Click Cancel and use "Resume session" to continue where you left off, or OK to start fresh.`
-    );
-    if (!ok) return;
+	const done = Object.keys(existing.ratings || {}).length;
+	const ok = confirm(
+	  `You have a saved session for this annotator (${done} / ${existing.items.length} items rated).\n\n` +
+	  `Starting a new session will permanently delete that progress.\n\n` +
+	  `Click Cancel and use "Resume session" to continue where you left off, or OK to start fresh.`
+	);
+	if (!ok) return;
   }
 
   $('loading').classList.add('active');
   try {
-    const backendData = await loadFromBackend(annotatorId);
-    if (!backendData) throw new Error('Could not reach the annotation backend. Check your connection.');
+	const backendData = await loadFromBackend(annotatorId, state.mode);
+	if (!backendData) throw new Error('Could not reach the annotation backend. Check your connection.');
 
-    const allItems = backendData.allocated_items || [];
-    if (allItems.length === 0) throw new Error('No items allocated for this annotator. Contact Audrey.');
+	const allItems = backendData.allocated_items || [];
+	if (allItems.length === 0) throw new Error('No items allocated for this annotator. Contact Audrey.');
 
-    initSession(annotatorId, allItems);
+	initSession(annotatorId, allItems);
   } catch (e) {
-    showError(e.message);
+	showError(e.message);
   } finally {
-    $('loading').classList.remove('active');
+	$('loading').classList.remove('active');
   }
 });
+
 resumeBtn.addEventListener('click', async () => {
   const annotatorId = annotatorSelect.value;
-  let saved = loadFromStorage(annotatorId);
+  let saved = loadFromStorage(annotatorId, state.mode);
 
   // If nothing in localStorage, try backend (e.g. new device)
   if (!saved && backendEnabled) {
 	$('loading').classList.add('active');
 	try {
-	  const remote = await loadFromBackend(annotatorId);
+	  const remote = await loadFromBackend(annotatorId, state.mode);
 	  if (remote && remote.session) {
 		saved = remote.session;
-		localStorage.setItem(STORAGE_PREFIX + annotatorId, JSON.stringify(saved));
+		localStorage.setItem(storagePrefix(state.mode) + annotatorId, JSON.stringify(saved));
 	  }
 	} finally {
 	  $('loading').classList.remove('active');
@@ -841,9 +970,10 @@ resumeBtn.addEventListener('click', async () => {
   }
 
   if (!saved) { showError('No saved session found.'); return; }
-  state.annotatorId = annotatorId;
-  state.items = saved.items;
-  state.ratings = saved.ratings;
+  state.annotatorId  = annotatorId;
+  state.mode         = saved.mode || state.mode;  // honour mode stored in session
+  state.items        = saved.items;
+  state.ratings      = saved.ratings;
   state.currentIndex = saved.currentIndex;
   startAnnotating();
 });
@@ -854,9 +984,10 @@ function showError(msg) {
 }
 
 function initSession(annotatorId, items) {
-  state.annotatorId = annotatorId;
-  state.items = items;
-  state.ratings = {};
+  state.annotatorId  = annotatorId;
+  // state.mode already set by mode selector
+  state.items        = items;
+  state.ratings      = {};
   state.currentIndex = 0;
   saveToStorage();
   startAnnotating();
@@ -865,33 +996,97 @@ function initSession(annotatorId, items) {
 // ── Annotation screen ──────────────────────────────────────────────────────
 function startAnnotating() {
   $('header-annotator').textContent = state.annotatorId;
+
+  const modeTag = $('header-mode');
+  if (state.mode === 'chunk') {
+	modeTag.textContent = 'chunks';
+	modeTag.style.display = 'inline';
+  } else {
+	modeTag.style.display = 'none';
+  }
+
   showScreen('annotate');
   renderItem();
 }
 
+// Render text content as paragraphs (XSS-safe: uses createTextNode).
+// Splits on blank lines (\n\n); single \n within a paragraph becomes <br>.
+function renderParagraphs(text, el) {
+  el.innerHTML = '';
+  const paragraphs = (text || '').split(/\n\n+/);
+  paragraphs.forEach(para => {
+	const trimmed = para.trim();
+	if (!trimmed) return;
+	const p = document.createElement('p');
+	const lines = trimmed.split('\n');
+	lines.forEach((line, i) => {
+	  if (i > 0) p.appendChild(document.createElement('br'));
+	  p.appendChild(document.createTextNode(line));
+	});
+	el.appendChild(p);
+  });
+}
+
 function renderItem() {
-  const idx = state.currentIndex;
+  const idx  = state.currentIndex;
   const item = state.items[idx];
   if (!item) { showDone(); return; }
 
-  const total = state.items.length;
-  const rated = Object.keys(state.ratings).length;
+  const total    = state.items.length;
+  const rated    = Object.keys(state.ratings).length;
+  const isChunk  = state.mode === 'chunk';
+  const panels   = document.querySelector('.text-panels');
+  const mainArea = document.querySelector('.annotate-main');
 
   // Progress
   $('progress-fill').style.width = `${(rated / total * 100).toFixed(1)}%`;
   $('progress-label').textContent = `${rated} / ${total}`;
 
   // Meta
-  $('item-id-tag').textContent = `ID: ${item.item_id}`;
-  $('item-type-tag').textContent = item.alignment_type || '1:1';
+  $('item-id-tag').textContent   = `ID: ${item.item_id}`;
+  $('item-type-tag').textContent = item.alignment_type || (isChunk ? 'chunk' : '1:1');
 
-  // Texts
-  $('src-text').textContent = item.src_text;
-  $('tgt-text').textContent = item.tgt_text;
+  // ── Chunk-specific display ──────────────────────────────────────────────
+  if (isChunk) {
+	// Render multi-paragraph text
+	renderParagraphs(item.src_text, $('src-text'));
+	renderParagraphs(item.tgt_text, $('tgt-text'));
+
+	// Word counts
+	const srcWc = $('src-wordcount');
+	const tgtWc = $('tgt-wordcount');
+	srcWc.style.display = 'block';
+	tgtWc.style.display = 'block';
+	srcWc.textContent = item.src_words != null ? `${item.src_words} words` : '';
+	tgtWc.textContent = item.tgt_words != null ? `${item.tgt_words} words` : '';
+
+	// Paragraph-group count above panels
+	const chunkInfo = $('chunk-info');
+	chunkInfo.style.display = 'block';
+	chunkInfo.textContent = item.n_paragraph_pairs != null
+	  ? `${item.n_paragraph_pairs} paragraph group${item.n_paragraph_pairs !== 1 ? 's' : ''}`
+	  : '';
+
+	// Layout: side-by-side at >900px, stacked at ≤900px
+	panels.classList.add('chunk-panels');
+	mainArea.classList.add('chunk-mode');
+
+  } else {
+	// ── Sentence mode: plain text (unchanged behaviour) ───────────────────
+	$('src-text').textContent = item.src_text;
+	$('tgt-text').textContent = item.tgt_text;
+
+	$('src-wordcount').style.display = 'none';
+	$('tgt-wordcount').style.display = 'none';
+	$('chunk-info').style.display    = 'none';
+
+	panels.classList.remove('chunk-panels');
+	mainArea.classList.remove('chunk-mode');
+  }
 
   // Restore saved rating if any
   const saved = state.ratings[item.item_id] || {};
-  
+
   // Score buttons
   document.querySelectorAll('.score-btn').forEach(btn => {
 	btn.classList.toggle('selected', String(btn.dataset.score) === String(saved.score));
@@ -901,18 +1096,17 @@ function renderItem() {
   $('note-input').value = saved.note || '';
 
   // Flag
-  const flagBtn = $('flag-btn');
+  const flagBtn       = $('flag-btn');
   const flagIndicator = $('item-flag-indicator');
-  const isFlagged = !!saved.flag;
+  const isFlagged     = !!saved.flag;
   flagBtn.classList.toggle('flagged', isFlagged);
-  flagBtn.textContent = isFlagged ? '⚑ Flagged' : '⚑ Flag for review';
+  flagBtn.textContent        = isFlagged ? '⚑ Flagged' : '⚑ Flag for review';
   flagIndicator.style.display = isFlagged ? 'inline' : 'none';
 
   // Nav buttons
   $('prev-btn').disabled = idx === 0;
   const isLast = idx === total - 1;
   $('next-btn').textContent = isLast ? 'Finish ✓' : 'Next →';
-  // Visually indicate whether a rating exists for this item
   const isRated = state.ratings[item.item_id]?.score !== undefined;
   $('next-btn').classList.toggle('btn-outline', !isRated);
 }
@@ -969,7 +1163,6 @@ function hasRating() {
 }
 
 function warnUnrated() {
-  // Brief visual shake on the score buttons to signal "rate first"
   const section = document.querySelector('.score-buttons');
   section.classList.remove('unrated-shake');
   void section.offsetWidth; // force reflow to restart animation
@@ -1003,9 +1196,8 @@ document.addEventListener('keydown', e => {
   if (!screens.annotate.classList.contains('active')) return;
   const tag = document.activeElement.tagName.toLowerCase();
   if (tag === 'textarea' || tag === 'input' || tag === 'select') {
-	// only handle arrow keys even in textarea
 	if (e.key === 'ArrowRight' && e.metaKey) { e.preventDefault(); goNext(); }
-	if (e.key === 'ArrowLeft' && e.metaKey) { e.preventDefault(); goPrev(); }
+	if (e.key === 'ArrowLeft'  && e.metaKey) { e.preventDefault(); goPrev(); }
 	return;
   }
   if (e.key >= '1' && e.key <= '5') {
@@ -1014,14 +1206,11 @@ document.addEventListener('keydown', e => {
 	document.querySelectorAll('.score-btn').forEach(b =>
 	  b.classList.toggle('selected', parseInt(b.dataset.score) === score));
 	updateProgress();
-	// Auto-advance after a short delay so the annotator sees the selection register
 	setTimeout(goNext, 300);
   }
-  if (e.key === 'f' || e.key === 'F') {
-	$('flag-btn').click();
-  }
+  if (e.key === 'f' || e.key === 'F') { $('flag-btn').click(); }
   if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
-  if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); goPrev(); }
 });
 
 // Export
@@ -1029,12 +1218,13 @@ $('export-btn').addEventListener('click', exportCSV);
 $('export-done-btn').addEventListener('click', exportCSV);
 
 function exportCSV() {
-  const rows = [['item_id', 'annotator_id', 'alignment_type', 'score', 'flag', 'note']];
+  const rows = [['item_id', 'annotator_id', 'mode', 'alignment_type', 'score', 'flag', 'note']];
   state.items.forEach(item => {
 	const r = state.ratings[item.item_id] || {};
 	rows.push([
 	  item.item_id,
 	  state.annotatorId,
+	  state.mode,
 	  item.alignment_type || '',
 	  r.score !== undefined ? r.score : '',
 	  r.flag ? 'true' : 'false',
@@ -1043,10 +1233,10 @@ function exportCSV() {
   });
   const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
   a.href = url;
-  a.download = `annotations_${state.annotatorId}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `annotations_${state.mode}_${state.annotatorId}_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1055,24 +1245,24 @@ function exportCSV() {
 $('quit-btn').addEventListener('click', () => {
   if (confirm('Save progress and quit? Your session is saved in the browser.')) {
 	saveToStorage();
-	sendToBackend(); // sync immediately on quit, don't wait for debounce
+	sendToBackend();
 	showScreen('setup');
   }
 });
 
 // ── Done screen ────────────────────────────────────────────────────────────
 function showDone() {
-  const total = state.items.length;
-  const rated = Object.keys(state.ratings).filter(id => state.ratings[id].score !== undefined).length;
+  const total   = state.items.length;
+  const rated   = Object.keys(state.ratings).filter(id => state.ratings[id].score !== undefined).length;
   const flagged = Object.values(state.ratings).filter(r => r.flag).length;
   const unrated = total - rated;
 
   $('done-stats').innerHTML =
 	`${rated} items rated<br>${flagged} flagged for review<br>${unrated > 0 ? `${unrated} items without a score` : 'All items scored'}`;
 
-  // Show load-more button only if backend is configured
+  // Load-more only makes sense for sentence mode (chunk sets are finite)
   const loadMoreBtn = $('load-more-btn');
-  if (backendEnabled) {
+  if (backendEnabled && state.mode === 'sentence') {
 	loadMoreBtn.style.display = 'inline-block';
 	loadMoreBtn.disabled = false;
 	loadMoreBtn.textContent = 'Load 50 more items';
@@ -1085,7 +1275,7 @@ function showDone() {
 }
 
 $('review-btn').addEventListener('click', () => {
-  const flaggedIdx = state.items.findIndex((item, i) => state.ratings[item.item_id]?.flag);
+  const flaggedIdx = state.items.findIndex(item => state.ratings[item.item_id]?.flag);
   if (flaggedIdx === -1) { alert('No flagged items found.'); return; }
   state.currentIndex = flaggedIdx;
   showScreen('annotate');
@@ -1093,7 +1283,7 @@ $('review-btn').addEventListener('click', () => {
 });
 
 $('load-more-btn').addEventListener('click', async () => {
-  const btn = $('load-more-btn');
+  const btn    = $('load-more-btn');
   const status = $('load-more-status');
   btn.disabled = true;
   btn.textContent = 'Loading…';
@@ -1101,41 +1291,40 @@ $('load-more-btn').addEventListener('click', async () => {
   status.textContent = 'Requesting items from server…';
 
   try {
-    // Topup uses GET with query params — GET requests don't trigger the
-    // Apps Script 302 redirect problem that affects POST, so we can read
-    // the response normally. The backend doGet handles action=topup.
-    const url = BACKEND_URL
-      + '?annotator_id=' + encodeURIComponent(state.annotatorId)
-      + '&action=topup'
-      + '&n=50';
-    const res = await fetch(url, { redirect: 'follow' });
-    if (!res.ok) throw new Error('Server returned ' + res.status);
-    const data = await res.json();
+	// Topup uses GET with query params — GET requests don't trigger the
+	// Apps Script 302 redirect problem that affects POST.
+	const url = BACKEND_URL
+	  + '?annotator_id=' + encodeURIComponent(state.annotatorId)
+	  + '&mode=' + encodeURIComponent(state.mode)
+	  + '&action=topup'
+	  + '&n=50';
+	const res = await fetch(url, { redirect: 'follow' });
+	if (!res.ok) throw new Error('Server returned ' + res.status);
+	const data = await res.json();
 
-    if (data.error) throw new Error(data.error);
+	if (data.error) throw new Error(data.error);
 
-    const newItems = data.new_items || [];
-    if (newItems.length === 0) {
-      status.textContent = 'No more items available — you have completed the full annotation set.';
-      btn.style.display = 'none';
-      return;
-    }
+	const newItems = data.new_items || [];
+	if (newItems.length === 0) {
+	  status.textContent = 'No more items available — you have completed the full annotation set.';
+	  btn.style.display = 'none';
+	  return;
+	}
 
-    // Append new items to existing session and continue
-    state.items = [...state.items, ...newItems];
-    state.currentIndex = state.items.length - newItems.length; // jump to first new item
-    saveToStorage();
+	state.items = [...state.items, ...newItems];
+	state.currentIndex = state.items.length - newItems.length;
+	saveToStorage();
 
-    status.textContent = `${newItems.length} new items loaded.`;
-    setTimeout(() => {
-      showScreen('annotate');
-      renderItem();
-    }, 800);
+	status.textContent = `${newItems.length} new items loaded.`;
+	setTimeout(() => {
+	  showScreen('annotate');
+	  renderItem();
+	}, 800);
 
   } catch (err) {
-    status.textContent = 'Error: ' + err.message;
-    btn.disabled = false;
-    btn.textContent = 'Load 50 more items';
+	status.textContent = 'Error: ' + err.message;
+	btn.disabled = false;
+	btn.textContent = 'Load 50 more items';
   }
 });
 </script>
