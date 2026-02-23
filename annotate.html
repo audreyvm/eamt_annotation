@@ -782,17 +782,16 @@ function sendToBackend() {
 }
 
 // Fetch saved session + allocated items from remote backend.
-// mode is passed as a query param so the backend reads the correct tab.
+// For chunk mode, adds &mode=chunk so the backend reads the correct tab.
+// Sentence mode uses no mode param to stay backward-compatible with the
+// existing backend that predates the chunk mode addition.
 // Returns { session, allocated_items } or null on failure.
 async function loadFromBackend(annotatorId, mode) {
   if (!backendEnabled) return null;
   try {
-	const res = await fetch(
-	  BACKEND_URL
-	  + '?annotator_id=' + encodeURIComponent(annotatorId)
-	  + '&mode=' + encodeURIComponent(mode || 'sentence'),
-	  { redirect: 'follow' }
-	);
+	let url = BACKEND_URL + '?annotator_id=' + encodeURIComponent(annotatorId);
+	if (mode === 'chunk') url += '&mode=chunk';
+	const res = await fetch(url, { redirect: 'follow' });
 	if (!res.ok) return null;
 	const data = await res.json();
 	if (data.error) return null;
@@ -874,6 +873,13 @@ async function updateResumeState(id) {
 
 	if (remote && remote.session) {
 	  saved = remote.session;
+	  // The backend stores slim sessions (ratings + currentIndex, no items list)
+	  // because items are not included in the POST payload to save bandwidth.
+	  // Reconstruct the full session by merging with allocated_items from the
+	  // same GET response — this is what makes Resume work after localStorage loss.
+	  if ((!saved.items || saved.items.length === 0) && remote.allocated_items && remote.allocated_items.length > 0) {
+		saved.items = remote.allocated_items;
+	  }
 	  localStorage.setItem(storagePrefix(state.mode) + id, JSON.stringify(saved));
 	}
 
@@ -1293,11 +1299,11 @@ $('load-more-btn').addEventListener('click', async () => {
   try {
 	// Topup uses GET with query params — GET requests don't trigger the
 	// Apps Script 302 redirect problem that affects POST.
-	const url = BACKEND_URL
+	let url = BACKEND_URL
 	  + '?annotator_id=' + encodeURIComponent(state.annotatorId)
-	  + '&mode=' + encodeURIComponent(state.mode)
 	  + '&action=topup'
 	  + '&n=50';
+	if (state.mode === 'chunk') url += '&mode=chunk';
 	const res = await fetch(url, { redirect: 'follow' });
 	if (!res.ok) throw new Error('Server returned ' + res.status);
 	const data = await res.json();
