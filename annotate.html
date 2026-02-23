@@ -961,13 +961,18 @@ resumeBtn.addEventListener('click', async () => {
   const annotatorId = annotatorSelect.value;
   let saved = loadFromStorage(annotatorId, state.mode);
 
-  // If nothing in localStorage, try backend (e.g. new device)
+  // If nothing in localStorage, try backend (e.g. new device or cleared storage)
   if (!saved && backendEnabled) {
 	$('loading').classList.add('active');
 	try {
 	  const remote = await loadFromBackend(annotatorId, state.mode);
 	  if (remote && remote.session) {
 		saved = remote.session;
+		// Backend stores slim sessions (ratings + currentIndex, no items).
+		// Reconstruct full session using allocated_items from the same response.
+		if ((!saved.items || saved.items.length === 0) && remote.allocated_items && remote.allocated_items.length > 0) {
+		  saved.items = remote.allocated_items;
+		}
 		localStorage.setItem(storagePrefix(state.mode) + annotatorId, JSON.stringify(saved));
 	  }
 	} finally {
@@ -981,6 +986,19 @@ resumeBtn.addEventListener('click', async () => {
   state.items        = saved.items;
   state.ratings      = saved.ratings;
   state.currentIndex = saved.currentIndex;
+
+  // After recovering from a server-rebuilt session, currentIndex is 0 even
+  // though many items may already be rated. Jump to the first unrated item
+  // so the annotator doesn't have to click through everything already done.
+  if (state.items && state.items.length > 0 &&
+	  state.currentIndex === 0 &&
+	  Object.keys(state.ratings || {}).length > 0) {
+	const firstUnrated = state.items.findIndex(
+	  item => state.ratings[item.item_id]?.score === undefined
+	);
+	if (firstUnrated > 0) state.currentIndex = firstUnrated;
+  }
+
   startAnnotating();
 });
 
